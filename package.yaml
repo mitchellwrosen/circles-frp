@@ -1,0 +1,33 @@
+name: circles-demo
+
+ghc-options: -Wall -freverse-errors
+
+default-extensions:
+  - LambdaCase
+  - OverloadedStrings
+  - RankNTypes
+  - RecursiveDo
+  - ScopedTypeVariables
+
+library:
+  source-dirs: src
+  dependencies:
+    - base
+    - lens
+    - linear
+    - reactive-banana
+    - sdl2
+
+executables:
+  circles-demo:
+    main: Main.hs
+    ghc-options: -threaded
+    dependencies:
+      - base
+      - cairo
+      - circles-demo
+      - lens
+      - linear
+      - reactive-banana
+      - sdl2
+      - StateVar

@@ -1,0 +1,39 @@
+-- This file has been generated from package.yaml by hpack version 0.17.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           circles-demo
+version:        0.0.0
+build-type:     Simple
+cabal-version:  >= 1.10
+
+library
+  hs-source-dirs:
+      src
+  default-extensions: LambdaCase OverloadedStrings RankNTypes RecursiveDo ScopedTypeVariables
+  ghc-options: -Wall -freverse-errors
+  build-depends:
+      base
+    , lens
+    , linear
+    , reactive-banana
+    , sdl2
+  exposed-modules:
+      Input
+      Reactive.Banana.Extra
+  default-language: Haskell2010
+
+executable circles-demo
+  main-is: Main.hs
+  default-extensions: LambdaCase OverloadedStrings RankNTypes RecursiveDo ScopedTypeVariables
+  ghc-options: -Wall -freverse-errors -threaded
+  build-depends:
+      base
+    , cairo
+    , circles-demo
+    , lens
+    , linear
+    , reactive-banana
+    , sdl2
+    , StateVar
+  default-language: Haskell2010
