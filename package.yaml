@@ -3,7 +3,9 @@ name: circles-demo
 ghc-options: -Wall -freverse-errors
 
 default-extensions:
+  - DeriveFunctor
   - LambdaCase
+  - NamedFieldPuns
   - OverloadedStrings
   - RankNTypes
   - RecursiveDo
@@ -13,10 +15,13 @@ library:
   source-dirs: src
   dependencies:
     - base
-    - lens
+    - cairo
+    - clock
     - linear
     - reactive-banana
     - sdl2
+    - StateVar
+    - text
 
 executables:
   circles-demo:
@@ -24,10 +29,6 @@ executables:
     ghc-options: -threaded
     dependencies:
       - base
-      - cairo
       - circles-demo
-      - lens
       - linear
       - reactive-banana
-      - sdl2
-      - StateVar

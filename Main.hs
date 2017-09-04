@@ -1,157 +1,105 @@
 module Main where
 
-import Input
-import Reactive.Banana.Extra (filterPrism)
+import Circle (Circle(Circle))
 
-import Control.Concurrent
-import Control.Monad
+import qualified Circle
+import qualified Engine
+
 import Control.Monad.Fix
 import Data.Int (Int32)
-import Data.Maybe (isJust, listToMaybe)
-import Foreign.Ptr (castPtr)
-import Linear (V2(V2), qd)
-import Linear.Affine ((.-.))
+import Data.List (findIndex)
+import Data.Maybe (isJust)
+import Linear (V2, qd)
+import Linear.Affine (Point(P), (.-.))
 import Reactive.Banana
-import Reactive.Banana.Frameworks
-import SDL
-  (InputMotion(Pressed, Released), MouseButton(ButtonLeft, ButtonRight),
-    Point(P), get)
-
-import qualified Graphics.Rendering.Cairo as Cairo
-import qualified SDL
-
 
 radius :: Int32
 radius = 20
 
 main :: IO ()
 main = do
-  SDL.initialize [SDL.InitVideo]
+  engine <- Engine.initialize "Circles"
 
-  window <- SDL.createWindow "Circles" SDL.defaultWindow
-  renderer <- SDL.createRenderer window (-1) SDL.defaultRenderer
-  size <- get (SDL.windowSize window)
-  texture <-
-    SDL.createTexture renderer SDL.ARGB8888 SDL.TextureAccessStreaming size
+  Engine.run engine $ mdo
+    -- Boilerplate event creation
 
-  (inputAddHandler, fireInput) <- newAddHandler
-  (tickAddHandler, fireTick) <- newAddHandler
+    eTick :: Event Float <-
+      Engine.ticks engine
 
-  network <- compile $ mdo
-    eInput :: Event Input <-
-      fromAddHandler inputAddHandler
+    eMouse :: Event (Point V2 Int32) <-
+      Engine.mouse engine
 
-    eTick :: Event () <-
-      fromAddHandler tickAddHandler
+    eLeftMouseDown :: Event (Point V2 Int32) <-
+      Engine.leftMouseDown engine
 
-    let eMouse :: Event (Point V2 Int32)
-        eMouse = filterPrism _InputMouse eInput
+    eLeftMouseUp :: Event (Point V2 Int32) <-
+      Engine.leftMouseUp engine
 
-        eClick :: Event (Point V2 Int32, MouseButton, InputMotion)
-        eClick = filterPrism _InputClick eInput
+    eRightMouseDown :: Event (Point V2 Int32) <-
+      Engine.rightMouseDown engine
 
-        eLeftClickDown :: Event (Point V2 Int32)
-        eLeftClickDown = filterJust (f <$> eClick)
-         where
-          f = \case
-            (pos, ButtonLeft, Pressed) -> Just pos
-            _ -> Nothing
-
-        eLeftClickUp :: Event (Point V2 Int32)
-        eLeftClickUp = filterJust (f <$> eClick)
-         where
-          f = \case
-            (pos, ButtonLeft, Released) -> Just pos
-            _ -> Nothing
-
-        eRightClickDown :: Event (Point V2 Int32)
-        eRightClickDown = filterJust (f <$> eClick)
-         where
-          f = \case
-            (pos, ButtonRight, Pressed) -> Just pos
-            _ -> Nothing
-
-    bCircles :: Behavior [Behavior (Point V2 Int32)] <-
+    -- The game state: a list of independently varying circles
+    bCircles :: Behavior [Behavior Circle] <-
       accumB [] (unions
-        [ ((:) <$> observeE
-            (bCircleGen eMouse eLeftClickDown eLeftClickUp <$> eNewCircle))
-
-        , deleteIx <$>
-            filterJust
-              (observeE
-                ((\xs p -> listToMaybe . filterIxs (p `inCircle`) <$> xs)
-                  <$> bCirclesAt
-                  <@> eRightClickDown))
+        [ eAddCircle
+        , eDeleteCircle
         ])
 
-    let -- A time-varying computation that calculates the circles that exist at
+    let eAddCircle :: Event ([Behavior Circle] -> [Behavior Circle])
+        eAddCircle = (:) <$> observeE eNewCircle
+         where
+          eNewCircle :: Event (Moment (Behavior Circle))
+          eNewCircle =
+            bCircleGen eMouse eLeftMouseDown eLeftMouseUp <$> eNewCircleCenter
+
+          -- An event that fires with the center of a new circle to create.
+          -- Circles can only be created sufficiently far away from all other
+          -- circles.
+          eNewCircleCenter :: Event (Point V2 Int32)
+          eNewCircleCenter =
+            filterJust (observeE (go <$> bCirclesAt <@> eLeftMouseDown))
+           where
+            go :: Moment [Circle]
+               -> Point V2 Int32
+               -> Moment (Maybe (Point V2 Int32))
+            go circles click = do
+              circles' <- circles
+              if any (nearby click) (map Circle.center circles')
+                then pure Nothing
+                else pure (Just click)
+
+        eDeleteCircle :: Event ([Behavior Circle] -> [Behavior Circle])
+        eDeleteCircle = deleteIx <$> filterJust (observeE eDeleteCircleAt)
+         where
+          eDeleteCircleAt :: Event (Moment (Maybe Int))
+          eDeleteCircleAt =
+            (\xs p -> findIndex (Circle.contains p) <$> xs)
+              <$> bCirclesAt
+              <@> eRightMouseDown
+
+        -- A time-varying computation that calculates the circles that exist at
         -- that time.
-        bCirclesAt :: Behavior (Moment [Point V2 Int32])
+        bCirclesAt :: Behavior (Moment [Circle])
         bCirclesAt = valueB . sequenceA <$> bCircles
 
-        eNewCircle :: Event (Point V2 Int32)
-        eNewCircle = filterJust (observeE (go <$> bCircles <@> eLeftClickDown))
-         where
-          go :: [Behavior (Point V2 Int32)]
-             -> Point V2 Int32
-             -> Moment (Maybe (Point V2 Int32))
-          go xs p = do
-            ps <- valueB (sequenceA xs)
-            if any (nearby p) ps
-              then pure Nothing
-              else pure (Just p)
-
     let -- Tag each tick with the circles that exist at that time.
-        eCircles :: Event [Point V2 Int32]
+        eCircles :: Event [Circle]
         eCircles = observeE (bCirclesAt <@ eTick)
 
-        renderCircles :: [Point V2 Int32] -> IO ()
-        renderCircles xs = do
-          texture_info <- SDL.queryTexture texture
-          (pixels, pitch) <- SDL.lockTexture texture Nothing
-          Cairo.withImageSurfaceForData (castPtr pixels) Cairo.FormatARGB32
-            (fromIntegral (SDL.textureWidth texture_info))
-            (fromIntegral (SDL.textureHeight texture_info))
-            (fromIntegral pitch)
-            (\surface -> Cairo.renderWith surface $ do
-              Cairo.setSourceRGB 0 0 0
-              Cairo.paint
-              Cairo.setSourceRGB 1 0 0
-              forM_ xs $ \(P (V2 x y)) -> do
-                Cairo.arc (fromIntegral x) (fromIntegral y)
-                  (fromIntegral radius) 0 (2*pi)
-                Cairo.fill
-                Cairo.newPath)
-          SDL.unlockTexture texture
-          SDL.copy renderer texture Nothing Nothing
-          SDL.present renderer
+    pure (mapM_ Circle.render <$> eCircles)
 
-    reactimate (renderCircles <$> eCircles)
-
-  actuate network
-
-  void . forkIO . forever $ do
-    fireTick ()
-    threadDelay 25000 -- 40fps
-
-  let loop =
-        waitInput >>= \case
-          InputKey SDL.KeycodeQ -> pure ()
-          input -> do
-            fireInput input
-            loop
-
-  loop
-
+-- Generate a new circle behavior, given mouse events and an initial position.
 bCircleGen
   :: (MonadFix m, MonadMoment m)
   => Event (Point V2 Int32)
   -> Event (Point V2 Int32)
   -> Event (Point V2 Int32)
   -> Point V2 Int32
-  -> m (Behavior (Point V2 Int32))
-bCircleGen eMouse eLeftClickDown eLeftClickUp p0 = mdo
-  bPos :: Behavior (Point V2 Int32) <-
+  -> m (Behavior Circle)
+bCircleGen eMouse eLeftMouseDown eLeftMouseUp p0 = mdo
+  -- The center of the circle starts at the given coordinate, but tracks the
+  -- mouse while it's being dragged.
+  bCenter :: Behavior (Point V2 Int32) <-
     stepper p0
       (filterJust
         ((\mdrag (P mouse) -> do
@@ -159,38 +107,34 @@ bCircleGen eMouse eLeftClickDown eLeftClickUp p0 = mdo
           pure (P (mouse - drag)))
         <$> bDragging <@> eMouse))
 
-  let eDragStart :: Event (V2 Int32)
+  let -- An event that fires when this circle starts dragging. The vector that
+      -- the event carries points from the center of the circle to the click.
+      eDragStart :: Event (V2 Int32)
       eDragStart =
         filterJust
-          ((\pos click ->
-            if click `inCircle` pos
-              then Just (click .-. pos)
+          ((\circle click ->
+            if Circle.contains click circle
+              then Just (click .-. Circle.center circle)
               else Nothing)
-          <$> bPos <@> eLeftClickDown)
+          <$> bCircle <@> eLeftMouseDown)
 
+      -- An event that fires when this circle is let go.
       eDragEnd :: Event (Point V2 Int32)
-      eDragEnd = whenE (isJust <$> bDragging) eLeftClickUp
+      eDragEnd = whenE (isJust <$> bDragging) eLeftMouseUp
 
-  -- When Nothing, not dragging. When Just, dragging with the mouse at
-  -- the given vector from the center of this circle.
+  -- Are we currently dragging, per eDragStart/eDragEnd?
   bDragging :: Behavior (Maybe (V2 Int32)) <-
-    accumB Nothing (unions
-      [ const . Just <$> eDragStart
-      , const Nothing <$ eDragEnd
-      ])
+    stepper Nothing
+      (unionWith const (Just <$> eDragStart) (Nothing <$ eDragEnd))
 
-  pure bPos
+  let bCircle :: Behavior Circle
+      bCircle = Circle <$> pure (1,0,0) <*> bCenter <*> pure radius
+
+  pure bCircle
 
 nearby :: Point V2 Int32 -> Point V2 Int32 -> Bool
 nearby x y = qd x y < 4*radius*radius
 
-inCircle :: Point V2 Int32 -> Point V2 Int32 -> Bool
-inCircle p c = qd p c < radius*radius
-
 deleteIx :: Int -> [a] -> [a]
 deleteIx 0 (_:xs) = xs
 deleteIx i (x:xs) = x : deleteIx (i-1) xs
-
--- Like 'filter', but keep only the indexes.
-filterIxs :: (a -> Bool) -> [a] -> [Int]
-filterIxs p = map fst . filter (\(_, x) -> p x) . zip [0..]
