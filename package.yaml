@@ -32,3 +32,4 @@ executables:
       - circles-demo
       - linear
       - reactive-banana
+      - sdl2

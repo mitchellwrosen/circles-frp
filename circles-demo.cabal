@@ -36,4 +36,5 @@ executable circles-demo
     , circles-demo
     , linear
     , reactive-banana
+    , sdl2
   default-language: Haskell2010

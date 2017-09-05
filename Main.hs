@@ -1,44 +1,35 @@
+{-# language RecordWildCards #-}
+
 module Main where
 
 import Circle (Circle(Circle))
+import Engine
 
 import qualified Circle
-import qualified Engine
 
 import Control.Monad.Fix
 import Data.Int (Int32)
-import Data.List (findIndex)
+import Data.List (delete, findIndex)
 import Data.Maybe (isJust)
 import Linear (V2, qd)
 import Linear.Affine (Point(P), (.-.))
 import Reactive.Banana
+import Reactive.Banana.Frameworks
+import SDL (Keycode, Keysym(..))
 
 radius :: Int32
 radius = 20
 
 main :: IO ()
 main = do
-  engine <- Engine.initialize "Circles"
+  run "Circles" $ \Input{..} -> mdo
+    eChord :: Event [Keycode] <-
+      accumE [] (unions
+        [ (:) . keysymKeycode <$> eKeyDown
+        , delete . keysymKeycode <$> eKeyUp
+        ])
 
-  Engine.run engine $ mdo
-    -- Boilerplate event creation
-
-    eTick :: Event Float <-
-      Engine.ticks engine
-
-    eMouse :: Event (Point V2 Int32) <-
-      Engine.mouse engine
-
-    eLeftMouseDown :: Event (Point V2 Int32) <-
-      Engine.leftMouseDown engine
-
-    eLeftMouseUp :: Event (Point V2 Int32) <-
-      Engine.leftMouseUp engine
-
-    eRightMouseDown :: Event (Point V2 Int32) <-
-      Engine.rightMouseDown engine
-
-    -- The game state: a list of independently varying circles
+    -- The game state: a varying list of independently varying circles
     bCircles :: Behavior [Behavior Circle] <-
       accumB [] (unions
         [ eAddCircle
@@ -82,11 +73,7 @@ main = do
         bCirclesAt :: Behavior (Moment [Circle])
         bCirclesAt = valueB . sequenceA <$> bCircles
 
-    let -- Tag each tick with the circles that exist at that time.
-        eCircles :: Event [Circle]
-        eCircles = observeE (bCirclesAt <@ eTick)
-
-    pure (mapM_ Circle.render <$> eCircles)
+    dynamicGame (fmap (mapM_ Circle.render) <$> bCirclesAt)
 
 -- Generate a new circle behavior, given mouse events and an initial position.
 bCircleGen
